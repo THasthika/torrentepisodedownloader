@@ -1,112 +1,163 @@
 package main
 
 import (
-	"bufio"
-	"flag"
 	"fmt"
-	"os"
+	"strconv"
 	"strings"
-	"time"
 
 	torrentscraper "github.com/tharindu96/torrentscraper-go"
 	"github.com/tharindu96/torrentscraper-go/providers"
 
-	"github.com/anacrolix/torrent"
-
-	_ "github.com/gdm85/go-libdeluge"
+	"github.com/tharindu96/go-deluge"
 )
-
-var torrentClient *torrent.Client
-var torrentScraper *torrentscraper.Scraper
-var activeTorrents map[string]*torrent.Torrent
-var showProgressFlag bool = true
 
 func main() {
 
-	activeTorrents = make(map[string]*torrent.Torrent)
+	torrentScraper := torrentscraper.New()
 
-	torrentClient, _ = torrent.NewClient(nil)
-	defer torrentClient.Close()
+	deluge, err := getDelugeConnection()
 
-	torrentScraper = torrentscraper.New()
+	if err != nil {
+		panic("Could not connect to Deluge")
+	}
 
-	var name string
-	var season uint
-	var episode uint
-	var match []string
-	var exclude []string
-	var raw_match string
-	var raw_exclude string
+	name := setShowName()
+	season := setSeasonNumber(name)
+	episodes := setEpisodeNumbers(name, season)
+	match := setMatchKeywords()
+	exclude := setExcludeKeywords()
 
-	flag.StringVar(&name, "name", "", "Name of the show")
-	flag.UintVar(&season, "season", 0, "Season number")
-	flag.UintVar(&episode, "episode", 0, "Episode number")
-	flag.StringVar(&raw_match, "match", "", "Match Keywords")
-	flag.StringVar(&raw_exclude, "exclude", "", "Exclude Keywords")
-
-	flag.StringVar(&name, "n", "", "Name of the show")
-	flag.UintVar(&season, "s", 0, "Season number")
-	flag.UintVar(&episode, "e", 0, "Episode number")
-	flag.StringVar(&raw_match, "ma", "", "Match Keywords")
-	flag.StringVar(&raw_exclude, "ex", "", "Exclude Keywords")
-
-	flag.Parse()
-
-	for _, k := range strings.Split(raw_match, ",") {
-		x := strings.TrimSpace(k)
-		if x != "" {
-			match = append(match, x)
+	if len(match) == 0 {
+		match = []string{
+			"HDTV",
 		}
 	}
 
-	for _, k := range strings.Split(raw_exclude, ",") {
-		x := strings.TrimSpace(k)
-		if x != "" {
-			exclude = append(exclude, x)
+	if len(exclude) == 0 {
+		exclude = []string{
+			"1080",
+			"720",
 		}
 	}
 
-	res := torrentScraper.SearchShow(name, season, episode)
-	if len(match) > 0 {
-		res = res.FilterMatchAny(match...)
-	}
-	if len(exclude) > 0 {
-		res = res.FilterExcludeAny(exclude...)
-	}
-
-	selected := selectResult(res.Torrents)
-	for uint(len(res.Torrents)) < selected {
-		selected = selectResult(res.Torrents)
-	}
-
-	addTorrent(res.Torrents[selected].Name, res.Torrents[selected].Magnet)
-
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		for {
-			input, _ := reader.ReadString('\n')
-			if string([]byte(input)[0]) == "q" {
-				showProgressFlag = false
-				break
-			}
+	for _, episode := range episodes {
+		res := torrentScraper.SearchShow(name, season, episode)
+		if len(match) > 0 {
+			res = res.FilterMatchAny(match...)
 		}
-	}()
+		if len(exclude) > 0 {
+			res = res.FilterExcludeAny(exclude...)
+		}
 
-	showProgress()
+		if len(res.Torrents) == 0 {
+			fmt.Printf("Warning: no torrent found!\n")
+			continue
+		}
+
+		torr := res.Torrents[0]
+
+		if torr.Seeds == 0 {
+			fmt.Printf("Warning: %s has no seeds\n", torr.Name)
+		}
+
+		_, err := deluge.CoreAddTorrentMagnet(torr.Magnet, map[string]interface{}{})
+		if err != nil {
+			fmt.Printf("Could not add torrent: %s\n", err.Error())
+		}
+
+		fmt.Printf("%s has been added\n", res.Torrents[0].Name)
+	}
 
 }
 
-func addTorrent(name string, magnet string) {
-	t, err := torrentClient.AddMagnet(magnet)
-	if err != nil {
-		return
+func getDelugeConnection() (*deluge.Deluge, error) {
+	var dhost = "localhost"
+	var dport uint = 8112
+	var dpass string
+
+	fmt.Printf("Deluge Host (localhost): ")
+	fmt.Scanln(&dhost)
+
+	fmt.Printf("Deluge Port (8112): ")
+	fmt.Scanln(&dport)
+
+	fmt.Printf("Deluge Password: ")
+	fmt.Printf("\033[8m")
+	fmt.Scanln(&dpass)
+	fmt.Printf("\033[28m")
+
+	d, err := deluge.New(fmt.Sprintf("http://%s:%d//json", dhost, dport), dpass)
+
+	return d, err
+}
+
+func setShowName() string {
+	var name string
+	fmt.Printf("Show Name: ")
+	fmt.Scanln(&name)
+	return name
+}
+
+func setSeasonNumber(name string) uint {
+	var season uint
+	fmt.Printf("%s Season: ", name)
+	fmt.Scanln(&season)
+	return season
+}
+
+func setEpisodeNumbers(name string, season uint) []uint {
+	var episodes = make([]uint, 0)
+	var l string
+	var t []string
+	fmt.Printf("%s %d Episodes: ", name, season)
+	fmt.Scanln(&l)
+	t = strings.Split(l, "-")
+	if len(t) > 1 {
+		min32, err1 := strconv.ParseUint(strings.TrimSpace(t[0]), 10, 32)
+		max32, err2 := strconv.ParseUint(strings.TrimSpace(t[1]), 10, 32)
+		if err1 != nil || err2 != nil {
+			return episodes
+		}
+		min := uint(min32)
+		max := uint(max32)
+		episodes = makeRange(min, max)
+		return episodes
 	}
-	activeTorrents[name] = t
-	<-t.GotInfo()
-	go func(t *torrent.Torrent) {
-		fmt.Println("Starting Download...")
-		t.DownloadAll()
-	}(t)
+	t = strings.Split(l, ",")
+	if len(t) > 0 {
+		for _, i := range t {
+			u32, err := strconv.ParseUint(strings.TrimSpace(i), 10, 32)
+			if err != nil {
+				continue
+			}
+			episodes = append(episodes, uint(u32))
+		}
+		return episodes
+	}
+	return episodes
+}
+
+func setMatchKeywords() []string {
+	fmt.Printf("Match Keywords: ")
+	return getKeywords()
+}
+
+func setExcludeKeywords() []string {
+	fmt.Printf("Exclude Keywords: ")
+	return getKeywords()
+}
+
+func getKeywords() []string {
+	var l string
+	var keywords = make([]string, 0)
+	fmt.Scanln(&l)
+	for _, k := range strings.Split(l, ",") {
+		x := strings.TrimSpace(k)
+		if x != "" {
+			keywords = append(keywords, x)
+		}
+	}
+	return keywords
 }
 
 func selectResult(res []*providers.TorrentMeta) uint {
@@ -126,23 +177,10 @@ func selectResult(res []*providers.TorrentMeta) uint {
 	return ret
 }
 
-func showProgress() {
-	for showProgressFlag {
-		clearScreen()
-		for n, t := range activeTorrents {
-			pcount := t.NumPieces()
-			completed := 0
-			s := t.Stats()
-
-			for _, x := range t.PieceStateRuns() {
-				if x.Complete {
-					completed += x.Length
-				}
-			}
-
-			per := float32(completed) / float32(pcount)
-			fmt.Printf("Status: %s\nProgress: %.2f\nSeeders: %d\nActive Peers: %d\nPeers: %d\n", n, per, s.ConnectedSeeders, s.ActivePeers, s.TotalPeers)
-		}
-		time.Sleep(time.Millisecond * 500)
+func makeRange(min, max uint) []uint {
+	a := make([]uint, max-min+1)
+	for i := range a {
+		a[i] = min + uint(i)
 	}
+	return a
 }
