@@ -27,7 +27,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:061c727addcdb09f9d3fc979577ccb9853aa2f2e961625b0443da64974d7d916"
+  digest = "1:1d9866d2600e69d241fa21f2d7f9940097868bc0635507cb7a69a9982fa7919c"
   name = "github.com/tharindu96/torrentscraper-go"
   packages = [
     ".",
@@ -36,7 +36,7 @@
     "providers/zooqlecom",
   ]
   pruneopts = "UT"
-  revision = "6e4266564d4c363298a8c38e60548e08c506a149"
+  revision = "9a4266fda26afa1af8c73e147c0c56a5ed337de6"
 
 [[projects]]
   branch = "master"

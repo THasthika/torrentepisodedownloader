@@ -3,6 +3,7 @@ package eztvag
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 
@@ -49,7 +50,13 @@ func SearchShow(name string, season uint, episode uint, out chan []*providers.To
 		query = fmt.Sprintf("%s-s%02d", name, season)
 	}
 	ret := search(query)
-	out <- ret
+	newret := make([]*providers.TorrentMeta, 0)
+	for _, t := range ret {
+		if strings.Contains(t.Name, name) {
+			newret = append(newret, t)
+		}
+	}
+	out <- newret
 }
 
 func search(query string) []*providers.TorrentMeta {
